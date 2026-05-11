@@ -1,4 +1,4 @@
-rootProject.name = "tscgo-java"
+rootProject.name = "golang-java"
 
 include ':native'
 include ':java'
