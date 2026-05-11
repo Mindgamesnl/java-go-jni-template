@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dev.pixelib.gojni.embedded.NativeBridgeTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-05-11T19:58:40.542Z" hostname="pomcuter" time="0.026">
+  <properties/>
+  <testcase name="createExampleObjectReturnsExpectedValues()" classname="dev.pixelib.gojni.embedded.NativeBridgeTest" time="0.023"/>
+  <testcase name="pingReturnsExpectedValue()" classname="dev.pixelib.gojni.embedded.NativeBridgeTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

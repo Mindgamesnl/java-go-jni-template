@@ -1,0 +1,183 @@
+// -- Goomba bootstrap ---------------------------------------------------------
+def goombaCacheDir = file("${rootDir}/.gradle/goomba")
+def isWindows      = System.getProperty('os.name').toLowerCase().contains('win')
+def goombaExe      = new File(goombaCacheDir, isWindows ? 'goomba.exe' : 'goomba')
+
+// Resolved at configuration time so buildNative.commandLine can reference it
+def goombaPath = { ->
+    // Check PATH first
+    def which = isWindows ? ['where', 'goomba'] : ['which', 'goomba']
+    def proc  = which.execute()
+    proc.waitFor()
+    if (proc.exitValue() == 0) {
+        def found = proc.text.trim().readLines().first()
+        logger.lifecycle("Using system goomba: ${found}")
+        return found
+    }
+    // Fall back to the cached binary
+    return goombaExe.absolutePath
+}
+
+tasks.register('setupGoomba') {
+    description = 'Uses system goomba if available, otherwise downloads it for the current platform into .gradle/goomba.'
+    group       = 'build setup'
+
+    outputs.file(goombaExe)
+
+    onlyIf {
+        // Skip the task entirely if goomba is already on PATH
+        def which = isWindows ? ['where', 'goomba'] : ['which', 'goomba']
+        def proc  = which.execute()
+        proc.waitFor()
+        def onPath = proc.exitValue() == 0
+        if (onPath) logger.lifecycle("goomba found on PATH, skipping download.")
+        !onPath && !goombaExe.exists()
+    }
+
+    doLast {
+        // -- Detect OS ------------------------------------------------------
+        def rawOs = System.getProperty('os.name').toLowerCase()
+        def os
+        if (rawOs.contains('linux'))                        os = 'linux'
+        else if (rawOs.contains('mac') || rawOs.contains('darwin')) os = 'darwin'
+        else if (rawOs.contains('win'))                     os = 'windows'
+        else throw new GradleException("Unsupported OS: ${rawOs}")
+
+        // -- Detect arch ----------------------------------------------------
+        def rawArch = System.getProperty('os.arch').toLowerCase()
+        def arch
+        if (rawArch in ['amd64', 'x86_64'])      arch = 'amd64'
+        else if (rawArch in ['aarch64', 'arm64']) arch = 'arm64'
+        else throw new GradleException("Unsupported architecture: ${rawArch}")
+
+        def assetName = "goomba-${os}-${arch}"
+        logger.lifecycle("Looking for goomba asset: ${assetName}")
+
+        // -- Resolve download URL from GitHub releases API ------------------
+        def apiUrl      = 'https://api.github.com/repos/pixelib/goomba/releases/latest'
+        def apiResponse = new URL(apiUrl).text
+        def matcher     = apiResponse =~ /"browser_download_url":\s*"([^"]*${java.util.regex.Pattern.quote(assetName)}[^"]*)"/
+        if (!matcher.find()) {
+            throw new GradleException("Could not find asset '${assetName}' in the latest goomba release.\nAPI response:\n${apiResponse}")
+        }
+        def downloadUrl = matcher.group(1)
+        logger.lifecycle("Downloading goomba from ${downloadUrl}")
+
+        // -- Download & cache -----------------------------------------------
+        goombaCacheDir.mkdirs()
+        goombaExe.bytes = new URL(downloadUrl).bytes
+        goombaExe.setExecutable(true, false)
+
+        logger.lifecycle("Goomba cached at ${goombaExe}")
+    }
+}
+
+// -- Fake JAVA_HOME ------------------------------------------------------------
+// The JDK usually only ships with the headers for the current platform, which is a problem for cross-compilation.
+// To work around this, we download the relevant headers for all platforms into a fake JAVA_HOME and point the compiler
+// there instead of the real JAVA_HOME.
+
+def fakeJavaHome   = file("${rootDir}/.gradle/fake-java-home")
+def fakeIncludeDir = new File(fakeJavaHome, 'include')
+
+// Raw URLs. jdk17 repo, verified paths
+def JNI_H_URL       = 'https://raw.githubusercontent.com/openjdk/jdk17/master/src/java.base/share/native/include/jni.h'
+// Linux and macOS both use the unix jni_md.h
+def JNI_MD_UNIX_URL = 'https://raw.githubusercontent.com/openjdk/jdk17/master/src/java.base/unix/native/include/jni_md.h'
+def JNI_MD_WIN_URL  = 'https://raw.githubusercontent.com/openjdk/jdk17/master/src/java.base/windows/native/include/jni_md.h'
+
+tasks.register('setupFakeJavaHome') {
+    description = 'Downloads JNI headers for all platforms into .gradle/fake-java-home.'
+    group       = 'build setup'
+
+    outputs.files(
+            new File(fakeIncludeDir, 'jni.h'),
+            new File(fakeIncludeDir, 'linux/jni_md.h'),
+            new File(fakeIncludeDir, 'darwin/jni_md.h'),
+            new File(fakeIncludeDir, 'win32/jni_md.h'),
+    )
+
+    doLast {
+        ['linux', 'darwin', 'win32'].each {
+            new File(fakeIncludeDir, it).mkdirs()
+        }
+
+        def download = { String url, File dest ->
+            if (!dest.exists()) {
+                logger.lifecycle("Downloading ${dest.name} from ${url}")
+                dest.bytes = new URL(url).bytes
+            } else {
+                logger.lifecycle("Already present, skipping: ${dest}")
+            }
+        }
+
+        download(JNI_H_URL,       new File(fakeIncludeDir, 'jni.h'))
+        download(JNI_MD_UNIX_URL, new File(fakeIncludeDir, 'linux/jni_md.h'))
+        download(JNI_MD_UNIX_URL, new File(fakeIncludeDir, 'darwin/jni_md.h'))
+        download(JNI_MD_WIN_URL,  new File(fakeIncludeDir, 'win32/jni_md.h'))
+    }
+}
+
+// -- Native build --------------------------------------------------------------
+
+def nativeOutputDir = file("$buildDir/native")
+
+// Always use the fake home. never the system JAVA_HOME
+def jniIncludeDir = fakeIncludeDir.absolutePath
+
+tasks.register('buildNative', Exec) {
+    dependsOn 'setupFakeJavaHome', 'setupGoomba'
+
+    description = 'Builds JNI shared libraries for all target platforms.'
+    group       = 'build'
+    workingDir  = file('.')
+
+    dependsOn 'setupFakeJavaHome'
+
+    inputs.dir(file('.'))
+    outputs.dir(nativeOutputDir)
+
+    doFirst {
+        nativeOutputDir.mkdirs()
+
+        environment.remove('JAVA_HOME')
+        environment.remove('GOROOT')
+        environment.remove('GOPATH')
+    }
+
+    environment 'CGO_ENABLED', '1'
+
+    // Include every platform header dir so cross-compilation always works
+    environment 'CGO_CFLAGS',
+            "-I${jniIncludeDir} " +
+                    "-I${new File(fakeIncludeDir, 'linux').absolutePath} " +
+                    "-I${new File(fakeIncludeDir, 'darwin').absolutePath} " +
+                    "-I${new File(fakeIncludeDir, 'win32').absolutePath} " +
+                    "-Wno-unused-command-line-argument"
+
+    environment 'CGO_LDFLAGS', '-Wno-unused-command-line-argument'
+    environment 'GO111MODULE', 'on'
+    environment 'GOWORK',      'off'
+    environment 'GOPROXY',     'direct'
+
+    // do we have an interactive terminal? if not, disable goomba's interactive UI
+    def isInteractive = System.console() != null
+
+    def resolvedGoomba = goombaPath()
+    commandLine(
+            resolvedGoomba,
+            'build',
+            '--platforms', 'windows,linux,macos',
+            '--arch', 'x64,arm64',
+            '--out',
+            '../java/src/main/resources/_native',
+            isInteractive ? '' : '--no-tui',
+            '--',
+            '-buildmode=c-shared'
+    )
+
+    doLast {
+        file('build').deleteDir()
+        file('-.o').delete()
+    }
+}

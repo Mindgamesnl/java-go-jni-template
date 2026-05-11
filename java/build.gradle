@@ -1,0 +1,68 @@
+plugins {
+    id 'java'
+}
+
+description = 'GoWithJava - A Java wrapper for Go libraries using JNI'
+
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
+}
+
+javadoc {
+    options {
+        source = '8'
+        encoding = 'UTF-8'
+        charSet = 'UTF-8'
+        docEncoding = 'UTF-8'
+        addStringOption('Xdoclint:none', '-quiet')
+    }
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
+
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+        repositories {
+            mavenCentral()
+        }
+    }
+}
+
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        showStandardStreams = true
+    }
+}
+
+// make all java phases depend on the native build
+tasks.named('compileJava') {
+    dependsOn(':native:buildNative')
+}
+
+// also make test depend on the native build, so that tests can run without needing to run compileJava first
+tasks.named('test') {
+    dependsOn(':native:buildNative')
+}
+
+sourceSets {
+    main {
+        resources {
+            srcDir 'src/main/resources'
+        }
+    }
+}
+
+tasks.named('processResources', ProcessResources) {
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+}

@@ -1,0 +1,4 @@
+rootProject.name = "tscgo-java"
+
+include ':native'
+include ':java'

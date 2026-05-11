@@ -1,0 +1,16 @@
+plugins {
+    id 'java'
+    id 'com.github.johnrengelman.shadow' version '8.1.1' apply false
+}
+
+ext {
+    _group = 'dev.pixelib.gojni'
+    _project = 'GoWithJava'
+    project = 'GoWithJava'
+    version = '1.0.0'
+}
+
+allprojects {
+    group = 'dev.pixelib.gojni'
+    version = '1.0.0'
+}
