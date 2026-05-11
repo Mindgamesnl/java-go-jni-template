@@ -171,7 +171,6 @@ tasks.register('buildNative', Exec) {
             '--arch', 'x64,arm64',
             '--out',
             '../java/src/main/resources/_native',
-            isInteractive ? '' : '--no-tui',
             '--',
             '-buildmode=c-shared'
     )
